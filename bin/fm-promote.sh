@@ -256,7 +256,7 @@ The mode-specific Definition of done below is the current delivery contract.
 EOF
   fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE"
   if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
-    printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
+    printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape and extends your rule 2 outside-write whitelist with the findings snapshot it mandates (`%s/%s/nm-<run>-findings.txt`).\n' "$DATA" "$ID"
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'

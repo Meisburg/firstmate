@@ -325,6 +325,8 @@ ASK_USER_BLOCK=
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
   ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
 fi
+RULE2="2. Stay inside this worktree; the only files you may write outside it are the lesson file and your status file."
+[ -z "$ASK_USER_BLOCK" ] || RULE2="2. Stay inside this worktree; the only files you may write outside it are the lesson file, your status file, and the ask-user findings snapshot below (\`$DATA/$ID/nm-<run>-findings.txt\`)."
 
 shell_quote() {
   printf "'"
@@ -649,7 +651,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; the only files you may write outside it are the lesson file and your status file.
+$RULE2
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`

@@ -14,9 +14,10 @@
 #   - context-aware next-step guidance for read-only, AFK, X mode, and normal
 #     watcher ownership
 #   - status-tail bounding, default and FM_SESSION_START_STATUS_TAIL override
-#   - the needs-you board: one ranked line per task (needs-decision, then
-#     ready-to-review, then still-working) with a bounded row count and a
-#     disclosed remainder, and unreviewed worker lessons surfaced beside it
+#   - the needs-you board: one ranked line per task, each labeled by its own
+#     stored status verb and grouped needs-a-human-or-supervisor rows, then
+#     ready-to-review rows, then still-working rows, with a bounded row count
+#     and a disclosed remainder, and unreviewed worker lessons surfaced beside it
 #   - the per-line status-tail cap and its truncation marker
 #   - startup backlog composition: done rows dropped, every in-flight/held/
 #     blocked row kept whole, the dispatchable queued listing bounded with an
@@ -1192,16 +1193,19 @@ EOF
 }
 
 # The needs-you board is the at-a-glance fleet summary the session digest leads
-# FLEET STATE with: one ranked line per in-flight task, grouped needs-decision
-# then ready-to-review then still-working, derived only from each task's durable
-# status log. A buried open decision still ranks high because the board reads
-# the same decision fold the drain does, not just the latest line.
+# FLEET STATE with: one ranked line per in-flight task, each labeled by its own
+# stored status verb, grouped needs-a-human-or-supervisor rows (failed,
+# captain-held, blocked, open decisions) then ready-to-review rows then
+# still-working rows, derived only from each task's durable status log. A buried
+# open decision still ranks high because the board reads the same decision fold
+# the drain does, not just the latest line.
 _needs_you_board_section() {  # <digest-output>
   printf '%s\n' "$1" | awk '/^Needs you \(/ {flag = 1; print; next} flag && /^$/ {exit} flag {print}'
 }
 
 test_needs_you_board_ranks_and_groups() {
-  local rec root home fakebin out board decision_line review_line working_line
+  local rec root home fakebin out board
+  local failed_line held_line blocked_line decision_line review_line working_line paused_line
   rec=$(new_world needs-you-board)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -1217,33 +1221,56 @@ EOF
   printf 'done: PR https://example.invalid/pr/7 checks green\n' > "$home/state/task-review.status"
   printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-work.meta"
   printf 'working: building the parser\n' > "$home/state/task-work.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-failed.meta"
+  printf 'failed [at=1700000001]: could not reproduce\n' > "$home/state/task-failed.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-held.meta"
+  printf 'captain-held [at=1700000002]: transferred to captain backlog\n' > "$home/state/task-held.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-blocked.meta"
+  printf 'blocked: stuck on the flaky test\nworking: retrying\n' > "$home/state/task-blocked.status"
+  printf 'window=fm-sess:live\nkind=ship\n' > "$home/state/task-paused.meta"
+  printf 'paused: waiting for the 2.1 release until 2030-01-01T00:00Z\n' > "$home/state/task-paused.status"
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   board=$(_needs_you_board_section "$out")
 
-  assert_contains "$out" 'Needs you (ranked: needs-decision, ready-to-review, still-working)' \
+  assert_contains "$out" 'Needs you (ranked: needs a human or supervisor, ready to review, still working)' \
     "digest did not label the needs-you board"
   assert_contains "$board" '[needs-decision] task-decision' \
     "board did not rank a buried open decision as needs-decision: $board"
-  assert_contains "$board" '[ready-to-review] task-review' \
-    "board did not rank a done task as ready-to-review: $board"
-  assert_contains "$board" '[still-working] task-work' \
-    "board did not rank an in-flight task as still-working: $board"
+  assert_contains "$board" '[blocked] task-blocked' \
+    "board restated an open blocked record as a human decision: $board"
+  assert_contains "$board" '[failed] task-failed' \
+    "board restated a failed crew as a human decision: $board"
+  assert_contains "$board" '[captain-held] task-held' \
+    "board did not rank a captain-held item in the top group: $board"
+  assert_contains "$board" '[done] task-review' \
+    "board did not label a done task by its own verb: $board"
+  assert_contains "$board" '[working] task-work' \
+    "board did not label an in-flight task by its own verb: $board"
+  assert_contains "$board" '[paused] task-paused' \
+    "board restated a deliberately paused crew as still working: $board"
 
+  failed_line=$(printf '%s\n' "$board" | grep -n -F '[failed] task-failed' | cut -d: -f1)
+  held_line=$(printf '%s\n' "$board" | grep -n -F '[captain-held] task-held' | cut -d: -f1)
+  blocked_line=$(printf '%s\n' "$board" | grep -n -F '[blocked] task-blocked' | cut -d: -f1)
   decision_line=$(printf '%s\n' "$board" | grep -n -F '[needs-decision] task-decision' | cut -d: -f1)
-  review_line=$(printf '%s\n' "$board" | grep -n -F '[ready-to-review] task-review' | cut -d: -f1)
-  working_line=$(printf '%s\n' "$board" | grep -n -F '[still-working] task-work' | cut -d: -f1)
-  [ -n "$decision_line" ] && [ -n "$review_line" ] && [ -n "$working_line" ] \
+  review_line=$(printf '%s\n' "$board" | grep -n -F '[done] task-review' | cut -d: -f1)
+  working_line=$(printf '%s\n' "$board" | grep -n -F '[working] task-work' | cut -d: -f1)
+  paused_line=$(printf '%s\n' "$board" | grep -n -F '[paused] task-paused' | cut -d: -f1)
+  [ -n "$failed_line" ] && [ -n "$held_line" ] && [ -n "$blocked_line" ] \
+    && [ -n "$decision_line" ] && [ -n "$review_line" ] \
+    && [ -n "$working_line" ] && [ -n "$paused_line" ] \
     || fail "board rows were not all present: $board"
-  [ "$decision_line" -lt "$review_line" ] \
-    || fail "board did not rank needs-decision above ready-to-review: $board"
-  [ "$review_line" -lt "$working_line" ] \
-    || fail "board did not rank ready-to-review above still-working: $board"
+  [ "$failed_line" -lt "$review_line" ] && [ "$held_line" -lt "$review_line" ] \
+    && [ "$blocked_line" -lt "$review_line" ] && [ "$decision_line" -lt "$review_line" ] \
+    || fail "board did not rank the needs-a-human-or-supervisor rows above ready to review: $board"
+  [ "$review_line" -lt "$working_line" ] && [ "$review_line" -lt "$paused_line" ] \
+    || fail "board did not rank ready to review above the still-working rows: $board"
 
   # No self-reported progress percentages: the board carries durable verbs and notes only.
   assert_not_contains "$board" '%' "board invented a progress percentage: $board"
 
-  pass "needs-you board ranks needs-decision, ready-to-review, and still-working with no progress percentages"
+  pass "needs-you board labels every row by its own stored verb and ranks the three groups with no progress percentages"
 }
 
 test_needs_you_board_is_bounded() {

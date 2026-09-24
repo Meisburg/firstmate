@@ -536,12 +536,17 @@ print_backlog_compact() {
 # derived only from durable records - each task's status log through
 # bin/fm-classify-lib.sh's open-decision fold and latest recognized event - and
 # never from a self-reported progress percentage, which drifts from reality and
-# would make the board dishonest. Rank is needs-decision (a crew is blocked or a
-# human was asked something) then ready-to-review (a crew reported `done`,
-# including a scout report) then still-working. Rows are bounded by
+# would make the board dishonest. Every row prints that task's own stored
+# status verb as its label, so the board never restates one recorded verb as
+# another. Verb-to-rank mapping: failed, captain-held, blocked, and an open
+# decision rank first (a crew or item that needs a supervisor or a human to
+# act); done ranks next (ready to review, including a scout report); working,
+# paused, resolved, and note rank last (still in flight, with paused
+# deliberately idle), and a task with no recognized status verb also ranks last
+# as working. Rows are bounded by
 # FM_SESSION_START_NEEDS_YOU_LIMIT, highest rank first, and anything omitted is
 # disclosed by count; the full per-task detail below is never bounded.
-_needs_you_row() {  # <rank-label> <id> <note>
+_needs_you_row() {  # <verb> <id> <note>
   local line="  - [$1] $2"
   [ -n "$3" ] && line="$line: $3"
   fm_cap_line "$line"
@@ -553,6 +558,9 @@ print_needs_you_board() {
   # step that needs it.
   _fm_wake_require_classify
   local meta id status line verb note open openverb opennote
+  local resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  local held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
+  local pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   local -a decision=() review=() working=()
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -575,39 +583,46 @@ print_needs_you_board() {
       note='no status recorded yet'
     fi
     case "$verb" in
-      needs-decision|blocked|failed) decision+=("$id"$'\t'"$note") ;;
-      done) review+=("$id"$'\t'"$note") ;;
-      *) working+=("$id"$'\t'"$note") ;;
+      working|needs-decision|blocked|done|failed|note|"$pause"|"$resolve"|"$held") : ;;
+      *) verb=working ;;
+    esac
+    case "$verb" in
+      failed|"$held"|blocked|needs-decision) decision+=("$verb"$'\t'"$id"$'\t'"$note") ;;
+      done) review+=("$verb"$'\t'"$id"$'\t'"$note") ;;
+      *) working+=("$verb"$'\t'"$id"$'\t'"$note") ;;
     esac
   done
-  subsection "Needs you (ranked: needs-decision, ready-to-review, still-working)"
+  subsection "Needs you (ranked: needs a human or supervisor, ready to review, still working)"
   local total=$(( ${#decision[@]} + ${#review[@]} + ${#working[@]} ))
   if [ "$total" -eq 0 ]; then
     printf '(none)\n'
     return 0
   fi
-  local remaining=$NEEDS_YOU_LIMIT shown=0 row rid rnote
+  local remaining=$NEEDS_YOU_LIMIT shown=0 row rverb rest rid rnote
   if [ "${#decision[@]}" -gt 0 ]; then
     for row in "${decision[@]}"; do
       [ "$remaining" -gt 0 ] || break
-      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
-      _needs_you_row needs-decision "$rid" "$rnote"
+      rverb=${row%%$'\t'*}; rest=${row#*$'\t'}
+      rid=${rest%%$'\t'*}; rnote=${rest#*$'\t'}
+      _needs_you_row "$rverb" "$rid" "$rnote"
       remaining=$((remaining - 1)); shown=$((shown + 1))
     done
   fi
   if [ "${#review[@]}" -gt 0 ]; then
     for row in "${review[@]}"; do
       [ "$remaining" -gt 0 ] || break
-      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
-      _needs_you_row ready-to-review "$rid" "$rnote"
+      rverb=${row%%$'\t'*}; rest=${row#*$'\t'}
+      rid=${rest%%$'\t'*}; rnote=${rest#*$'\t'}
+      _needs_you_row "$rverb" "$rid" "$rnote"
       remaining=$((remaining - 1)); shown=$((shown + 1))
     done
   fi
   if [ "${#working[@]}" -gt 0 ]; then
     for row in "${working[@]}"; do
       [ "$remaining" -gt 0 ] || break
-      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
-      _needs_you_row still-working "$rid" "$rnote"
+      rverb=${row%%$'\t'*}; rest=${row#*$'\t'}
+      rid=${rest%%$'\t'*}; rnote=${rest#*$'\t'}
+      _needs_you_row "$rverb" "$rid" "$rnote"
       remaining=$((remaining - 1)); shown=$((shown + 1))
     done
   fi
