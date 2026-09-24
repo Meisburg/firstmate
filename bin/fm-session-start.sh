@@ -43,7 +43,9 @@
 #                       detected primary harness.
 #   5. read-once contract - the do-not-re-read contract covering every source
 #                       represented by the two digests below.
-#   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   6. fleet digest   - the needs-you board (one ranked line per in-flight
+#                       task), any worker lessons still awaiting review, a
+#                       compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
 #                       state/.afk daemon flag), and a cheap per-task
@@ -358,6 +360,11 @@ STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
 QUEUED_LIMIT=${FM_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
+# The needs-you board's row bound. Unlike the backlog bound this is a total
+# across all three rank groups, highest rank first, because the board's whole
+# purpose is to be read at a glance.
+NEEDS_YOU_LIMIT=${FM_SESSION_START_NEEDS_YOU_LIMIT:-12}
+case "$NEEDS_YOU_LIMIT" in ''|*[!0-9]*|0) NEEDS_YOU_LIMIT=12 ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
 
 RULE='================================================================================'
@@ -522,6 +529,110 @@ print_backlog_compact() {
   else
     printf 'ABSENT\n'
   fi
+}
+
+# Needs-you board: one ranked line per in-flight task, so a session reads the
+# fleet at a glance before the full metadata and status tails below. It is
+# derived only from durable records - each task's status log through
+# bin/fm-classify-lib.sh's open-decision fold and latest recognized event - and
+# never from a self-reported progress percentage, which drifts from reality and
+# would make the board dishonest. Rank is needs-decision (a crew is blocked or a
+# human was asked something) then ready-to-review (a crew reported `done`,
+# including a scout report) then still-working. Rows are bounded by
+# FM_SESSION_START_NEEDS_YOU_LIMIT, highest rank first, and anything omitted is
+# disclosed by count; the full per-task detail below is never bounded.
+_needs_you_row() {  # <rank-label> <id> <note>
+  local line="  - [$1] $2"
+  [ -n "$3" ] && line="$line: $3"
+  fm_cap_line "$line"
+}
+
+print_needs_you_board() {
+  # Status verb and decision-fold reads are bin/fm-classify-lib.sh's contract,
+  # loaded lazily by the shared wake library; this board is the only digest
+  # step that needs it.
+  _fm_wake_require_classify
+  local meta id status line verb note open openverb opennote
+  local -a decision=() review=() working=()
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    status="$STATE/$id.status"
+    verb=''; note=''
+    if [ -f "$status" ] && [ ! -L "$status" ]; then
+      open=$(status_open_decisions "$status")
+      if [ -n "$open" ]; then
+        line=${open%%$'\n'*}
+        openverb=${line#*$'\t'}; openverb=${openverb%%$'\t'*}
+        opennote=${line##*$'\t'}
+        verb=${openverb:-needs-decision}; note=$opennote
+      else
+        line=$(last_status_line "$status")
+        status_line_verb "$line" verb
+        note=$(status_line_note "$line")
+      fi
+    else
+      note='no status recorded yet'
+    fi
+    case "$verb" in
+      needs-decision|blocked|failed) decision+=("$id"$'\t'"$note") ;;
+      done) review+=("$id"$'\t'"$note") ;;
+      *) working+=("$id"$'\t'"$note") ;;
+    esac
+  done
+  subsection "Needs you (ranked: needs-decision, ready-to-review, still-working)"
+  local total=$(( ${#decision[@]} + ${#review[@]} + ${#working[@]} ))
+  if [ "$total" -eq 0 ]; then
+    printf '(none)\n'
+    return 0
+  fi
+  local remaining=$NEEDS_YOU_LIMIT shown=0 row rid rnote
+  if [ "${#decision[@]}" -gt 0 ]; then
+    for row in "${decision[@]}"; do
+      [ "$remaining" -gt 0 ] || break
+      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
+      _needs_you_row needs-decision "$rid" "$rnote"
+      remaining=$((remaining - 1)); shown=$((shown + 1))
+    done
+  fi
+  if [ "${#review[@]}" -gt 0 ]; then
+    for row in "${review[@]}"; do
+      [ "$remaining" -gt 0 ] || break
+      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
+      _needs_you_row ready-to-review "$rid" "$rnote"
+      remaining=$((remaining - 1)); shown=$((shown + 1))
+    done
+  fi
+  if [ "${#working[@]}" -gt 0 ]; then
+    for row in "${working[@]}"; do
+      [ "$remaining" -gt 0 ] || break
+      rid=${row%%$'\t'*}; rnote=${row#*$'\t'}
+      _needs_you_row still-working "$rid" "$rnote"
+      remaining=$((remaining - 1)); shown=$((shown + 1))
+    done
+  fi
+  if [ "$shown" -lt "$total" ]; then
+    printf '(%d more task(s) omitted from this board; the full metadata and status tails below are never bounded, or raise FM_SESSION_START_NEEDS_YOU_LIMIT)\n' \
+      "$((total - shown))"
+  fi
+}
+
+# Worker lessons are captured automatically by the ship/scout scaffold; filing
+# stays curated, through firstmate's stow path (bin/fm-lesson.sh owns the intake
+# and the reviewed marker). Surface the lessons still waiting for review, bounded
+# the same way as the board.
+print_pending_lessons() {
+  local pending count shown
+  pending=$("$SCRIPT_DIR/fm-lesson.sh" pending 2>/dev/null) || pending=
+  [ -n "$pending" ] || return 0
+  count=$(printf '%s\n' "$pending" | grep -c .)
+  subsection "Worker lessons pending review"
+  shown=$(printf '%s\n' "$pending" | head -n "$NEEDS_YOU_LIMIT")
+  printf '%s\n' "$shown" | sed 's/^/  - /'
+  if [ "$count" -gt "$NEEDS_YOU_LIMIT" ]; then
+    printf '(%d more pending; bin/fm-lesson.sh pending)\n' "$((count - NEEDS_YOU_LIMIT))"
+  fi
+  printf 'Review each with bin/fm-lesson.sh show <id>, file only what is worth keeping into data/learnings.md through the stow path, then record the outcome with bin/fm-lesson.sh reviewed <id> --filed|--skipped.\n'
 }
 
 print_status_tail() {
@@ -830,6 +941,8 @@ EOF
 # truncated tail must never take.
 stage fleet-state
 section "FLEET STATE"
+print_needs_you_board
+print_pending_lessons
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
 subsection "Work under way (state/*.meta)"

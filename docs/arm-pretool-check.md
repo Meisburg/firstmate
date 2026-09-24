@@ -125,6 +125,14 @@ When the command carries such grammar and its raw bytes reference both a `fm-wat
 This backstop mirrors the protected-execution fail-closed rule and covers forms like `while true; do pkill -f fm-watch; done`, `for x in 1; do pkill -f fm-watch; done`, `case x in x) pkill -f fm-watch ;; esac`, and `until false; do kill $(pgrep -f fm-watch); done`.
 It is gated on the grammar being unsupported: in grammar the classifier does model, command-position analysis is authoritative, so data mentions such as `echo 'pkill -f fm-watch'` and a loop that only names the watcher without a kill verb such as `for f in 1; do echo fm-watch; done` remain allowed.
 
+## Residual risk
+
+The seatbelt denies unsafe watcher command shapes before execution; it is not a general shell-safety layer and not a post-arm liveness proof.
+Deliberate obfuscation beyond the classifier's coupled decode set, and opaque dynamic dataflow such as `bash -lc "$WHOLE_COMMAND"`, are outside its reach by design and remain the post-arm liveness guards' responsibility.
+It only sees commands that reach the harness's PreToolUse or Shell event, so a command run from a hand shell, a scheduled job, or another tool surface is never classified at all.
+It is fail-open at the transport boundary: missing `jq` or Node, malformed stdin, and an invalid classifier response all allow the command instead of denying every shell call.
+An allowed arm is not a verified arm, because whether the cycle actually started is the watcher lock and beacon check's question rather than this guard's.
+
 ## Stable reason codes
 
 Every semantic deny includes one stable code in square brackets before its prose reason.

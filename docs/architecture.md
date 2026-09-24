@@ -408,6 +408,28 @@ Allocation and return serialize on one project lock per machine-local Firstmate 
 Before the worktree is returned, teardown concludes the task's own no-mistakes run when it is parked at a gate, including a run whose head the task copy cannot resolve - the shared runs-ledger continuation proof is the only recognition for that case, so cleanup never orphans a parked run the pipeline advanced past the submitted head.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, slot-ownership proof, endpoint-close refusal, PR-discovery fallback, pre-teardown run conclusion, and stale-lock recovery procedure; [`tests/fm-teardown-endpoint-safety.test.sh`](../tests/fm-teardown-endpoint-safety.test.sh) and [`tests/fm-secondmate-safety.test.sh`](../tests/fm-secondmate-safety.test.sh) pin the slot-collision boundary.
 
+## Guard residual risk
+
+Each guard family below stops a named failure, and this section is deliberately candid about what stays outside it.
+
+### Spawn isolation and the ship brief's isolation check
+
+`bin/fm-spawn.sh`'s isolation assertion and fresh-base refusal prove placement once at launch, not for the life of the task: a worker that later checks out another branch, a provider that moves a pooled worktree's base after the check, or a hand shell opened in the primary checkout is not re-checked, and the brief's own `pwd -P` stop is an instruction the worker must follow rather than a kernel boundary.
+The tangle detector reads branch state, so a detached HEAD in the primary checkout is healthy by construction and indistinguishable from an intentional one.
+`FM_TASK_ID` marks a worker pane, so a command run from outside that pane, or with the marker cleared, defeats the runner's primary-checkout refusal.
+
+### The brief scaffold's safety gates
+
+The fixed `Delivery contract: mode=` line keeps the worker's instructions and the recorded task from diverging, but it proves only that the two values agree, not that the mode was the right rigor for the task.
+The rest of the generated scaffold is a safety contract the worker is instructed to follow rather than a runtime gate: `fm-spawn.sh` refuses leftover placeholders and a mismatched mode, but a brief edited outside the scaffold is not re-validated beyond that line.
+The Herdr hard gate makes an omitted contract loudly visible at scaffold time, but it cannot detect a task that only later turns out to need Herdr lifecycle commands.
+
+### The no-mistakes gate authority boundary
+
+The boundary refuses fleet-mutation entry points; it does not sandbox the gate, whose agents still run with the home's real credentials, filesystem, PATH, and daemon access.
+`disable_project_settings` is honored only from the trusted default-branch copy, so a repository without that copy, or a no-mistakes build below the supported floor, loses the setting without an error here.
+The gate-topology detection is path-based and carries the relocated-home limitation owned by `bin/fm-gate-refuse-lib.sh`, so a checkout that matches neither signal is treated as an ordinary one.
+
 ## Optional Relay
 
 Relay is opt-in presence for the shared `@myfirstmate` bot on both public surfaces it supports, X and Discord.
