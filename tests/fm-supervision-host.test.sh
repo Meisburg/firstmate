@@ -293,6 +293,61 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail() {
   pass "dispatch entry: the host reads branch eligibility and the wake prompt from the Pi branch's own owner"
 }
 
+# A lane leased to a LIVE branch actor cannot be acted on by main at all
+# (bin/fm-lease.sh refuses the claim, bin/fm-control.sh refuses lifecycle
+# control), so a decision-owned stale row for that lane must stay claimable by
+# the branch. With no lease, a lease held by main, or a lease whose holder is
+# gone, the row stays main-only exactly as before (firstmate backlog:
+# branch-row-routing-stall).
+test_dispatch_claims_a_decision_owned_stale_row_when_a_live_branch_holds_the_lease() {
+  local home state out rows_line dead_pid
+  home="$TMP_ROOT/dispatch-lease-aware"
+  state="$home/state"
+  mkdir -p "$state"
+  printf 'project=demo\nwindow=fm-demo\n' > "$state/demo.meta"
+  # An OPEN needs-decision makes this row decision-owned: main-only, attended.
+  printf 'working [at=1]: started\nneeds-decision [at=2]: pick one\n' > "$state/demo.status"
+  append_wake "$state" stale fm-demo "stale: fm-demo (idle 900s, possible wedge, escalation 3)"
+
+  # (1) No lease at all: unchanged behavior - the row is left to main, and the
+  #     scan reports unsafe with an empty claim set. That IS the wedge shape the
+  #     backlog filed: the branch sees nothing it may claim, so nothing acts.
+  out=$(FM_HOME="$home" node "$DISPATCH" scope)
+  assert_contains "$out" "status=unsafe" "a queue of purely main-owned content must report unsafe"
+  rows_line=$(printf '%s\n' "$out" | sed -n 's/^rows=//p')
+  [ -z "$rows_line" ] || fail "a decision-owned stale row with no lease must stay main-only, got rows=$rows_line"
+
+  # (2) A live branch lease whose holder is this home's session lock: main
+  #     cannot act, so the branch must be able to claim the row.
+  printf '%s\n' "$$" > "$state/.lock"
+  printf 'branch\t%s\t%s\n' "$$" "$(date +%s)" > "$state/.lease-demo"
+  out=$(FM_HOME="$home" node "$DISPATCH" scope)
+  assert_contains "$out" "status=safe" "a scan with a branch-leased stale row must be safe"
+  rows_line=$(printf '%s\n' "$out" | sed -n 's/^rows=//p')
+  [ "$rows_line" = "1" ] || fail "a decision-owned stale row on a live branch lease must stay claimable by the branch, got rows=$rows_line"
+  assert_contains "$out" "tasks=demo" "the branch-leased stale row must resolve to its task"
+
+  # (3) The lease belongs to MAIN: nothing changes, the row is main-only.
+  printf 'main\t%s\t%s\n' "$$" "$(date +%s)" > "$state/.lease-demo"
+  out=$(FM_HOME="$home" node "$DISPATCH" scope)
+  rows_line=$(printf '%s\n' "$out" | sed -n 's/^rows=//p')
+  [ -z "$rows_line" ] || fail "a main lease must not make a decision-owned row branch-claimable, got rows=$rows_line"
+
+  # (4) The branch lease's holder is GONE (a dead supervisor): the file must not
+  #     take the row away from main.
+  ( sleep 30 ) & dead_pid=$!
+  kill -9 "$dead_pid" 2>/dev/null || true
+  wait "$dead_pid" 2>/dev/null || true
+  printf '%s\n' "$dead_pid" > "$state/.lock"
+  printf 'branch\t%s\t%s\n' "$dead_pid" "$(date +%s)" > "$state/.lease-demo"
+  out=$(FM_HOME="$home" node "$DISPATCH" scope)
+  rows_line=$(printf '%s\n' "$out" | sed -n 's/^rows=//p')
+  [ -z "$rows_line" ] || fail "a dead branch-lease holder must not take a decision-owned row from main, got rows=$rows_line"
+
+  pass "dispatch: a live branch lease keeps a decision-owned stale row claimable by the branch"
+}
+
+
 # --- host loop ----------------------------------------------------------------
 
 test_attended_close_passes_straight_to_main() {
@@ -814,6 +869,7 @@ test_superseded_host_leaves_the_owner_untouched() {
 test_report_surface_enforces_actor_turn_and_scope
 test_report_after_the_return_is_queued_for_main
 test_dispatch_entry_scopes_rows_and_renders_the_away_tail
+test_dispatch_claims_a_decision_owned_stale_row_when_a_live_branch_holds_the_lease
 test_attended_close_passes_straight_to_main
 test_away_wake_is_handled_on_the_engine_and_never_reaches_main
 test_away_turn_without_a_report_hands_the_wake_to_main
