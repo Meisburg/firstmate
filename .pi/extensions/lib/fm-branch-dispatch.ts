@@ -263,6 +263,39 @@ function hasOpenNeedsDecision(
   return [...open.values()].includes("needs-decision");
 }
 
+/**
+ * True when `task`'s lane is leased to the supervision BRANCH actor and that
+ * lease is LIVE. Mirrors bin/fm-lease-lib.sh's `fm_lease_live`: an actor, a
+ * numeric holder pid that is still alive, and a session lock that names the
+ * same pid. A dead or torn lease file therefore never takes a row away from
+ * main — only a branch that genuinely still owns the lane does.
+ *
+ * Why this exists (firstmate backlog: branch-row-routing-stall): a lane leased
+ * to the branch cannot be acted on by main at all — `bin/fm-lease.sh` refuses
+ * the claim and `bin/fm-control.sh` refuses lifecycle control — so a row kept
+ * main-only for such a lane strands it with no reachable actor.
+ */
+function taskLeasedToLiveBranch(state: string, task: string): boolean {
+  let record: string;
+  let lockPid: string;
+  try {
+    record = readFileSync(`${state}/.lease-${task}`, "utf8");
+    lockPid = (readFileSync(`${state}/.lock`, "utf8").split(/\r?\n/)[0] ?? "").trim();
+  } catch {
+    return false;
+  }
+  const [actor = "", rawPid = ""] = record.split("\t");
+  if (actor.trim() !== "branch") return false;
+  const holder = rawPid.trim();
+  if (!/^[0-9]+$/.test(holder) || holder !== lockPid) return false;
+  try {
+    process.kill(Number(holder), 0);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export function scopeForUnreadWake(state: string, heartbeat: boolean, afk = false): UnreadWakeScope {
   let queue = "";
   try {
@@ -393,8 +426,20 @@ export function scopeForUnreadWake(state: string, heartbeat: boolean, afk = fals
           staleDecisionOwnership.set(statusPath, decisionOwned);
         }
         if (staleDecisionOwnership.get(statusPath)) {
-          needsDecisionKeys.push(key);
-          if (!afk) continue;
+          // A decision-owned row is main-only while the captain is attended,
+          // because the captain owns the decision. The one case where that
+          // would strand a lane is a task whose lease is held by a LIVE branch
+          // actor: main then cannot act on it at all (bin/fm-lease.sh refuses
+          // the claim, bin/fm-control.sh refuses lifecycle control), so keeping
+          // the row main-only leaves NO actor able to recover the lane. The
+          // branch is then the only actor that may act, so the row stays
+          // claimable and no longer marks later triggers for this task as
+          // main-only (firstmate backlog: branch-row-routing-stall).
+          const branchMustAct = !afk && taskLeasedToLiveBranch(state, task);
+          if (!branchMustAct) {
+            needsDecisionKeys.push(key);
+            if (!afk) continue;
+          }
         }
       }
     } else {
