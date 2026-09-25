@@ -192,6 +192,13 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 - Unreadable hook input remains fail-open.
 - No harness adapter uses a shell ampersand to manufacture supervision.
 
+## Residual risk
+
+The guard blocks or forces one follow-up at the primary turn boundary and nothing more: it does not keep supervision alive between turns, and it cannot see a supervision need that arises after its verdict while a turn is still in flight.
+Its verdict is only as good as the hook that invokes it, so an unloaded or version-drifted integration, a harness that terminates the hook at its own timeout, and an interrupted turn that never fires a stop event all leave that boundary unguarded in exactly the way the guard exists to prevent.
+It fails open on missing `jq`, empty stdin, and a malformed payload, and Claude's mode deliberately fails open after its bounded block budget, so a broken guard reports rather than wedges the session.
+It judges supervision ownership from this home's lock, beacon, and process identity rather than from the work itself: a live-but-wrong supervisor, a beacon that is stale yet still inside its grace, and a watcher belonging to a sibling home are all outside its verdict.
+
 ## Regression coverage
 
 `tests/fm-turnend-guard.test.sh` covers the predicate, main and secondmate primary scope, child-worktree exclusion, `FM_HOME` and `FM_STATE_OVERRIDE` precedence, the live-lock and fresh-beacon guard predicate, the cooperative `--claude` open-generation claim wait, monotonic failed-epoch progression, bounded attended fail-open, the same bound against a ledger frozen by an inert auto-arm with and without a verified failure episode, post-alarm continuation suppression, positive recovery reset, generation and legacy claim cases that must block or clear instead of allowing a blind stop, away-mode daemon ownership between watcher cycles and over a watcher lock left behind by an exited watcher, plus its dead, pid-reused, absent, stale-beacon, and away-mode-off negatives, the away-mode beacon's poll-derived grace widening for a live daemon still mid-cycle and its bound against a dead daemon, a beacon older than that wider grace, and FM_POLL's inapplicability with away mode off, Pi logical-run latching, missing-`jq` behavior, all five primary registrations, Grok native and legacy selection, typed field precedence, malformed input, and exactly-one-path safety.

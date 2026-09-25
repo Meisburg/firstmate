@@ -118,6 +118,15 @@ The default 300-second grace is unchanged.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.
 The watcher uses bash's native fatal handling for HUP and TERM, including during a blocked poll, so both run its EXIT cleanup; `watcher_stop_signals` in `bin/fm-watch.sh` owns the signal-handling rationale.
 
+## Residual risk
+
+Continuity restoration starts and verifies one successor arm around each actionable close; it does not make the watcher's own cycle infallible, so a cycle that ends without an actionable reason is still reported as a typed failure rather than a wake.
+A successor that starts and then wedges before its first beacon passes the liveness check, and only a later stale beacon surfaces it, so the gap between "restored" and "polling" is real.
+The adapters depend on the harness loading its extension, plugin, or hook: an unloaded or version-drifted integration restores nothing, and detecting that failure then depends entirely on the turn-end guard.
+A watcher that is alive with a fresh beacon but blocked inside a poll looks healthy to every check until the beacon passes its grace.
+The durable wake queue preserves events across a handover but not their handling, so an unacknowledged wake is re-presented rather than forced.
+Ownership is home-scoped, so continuity in one home says nothing about a sibling home whose own adapter never ran.
+
 ## Regression coverage
 
 `tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.

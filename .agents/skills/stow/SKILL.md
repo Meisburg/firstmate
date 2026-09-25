@@ -210,6 +210,13 @@ A local skill exists only in this home, so offloading an entry out of `data/capt
 
 ## Knowledge sweep and routing
 
+### Worker-reported lessons
+
+Ship and scout workers capture one machine-readable lesson at done in `data/<id>/lesson.md`; the block format is owned by `bin/fm-brief.sh`.
+Run `bin/fm-lesson.sh pending`, read each with `bin/fm-lesson.sh show <id>`, and treat every lesson as a sweep finding: file only the durable, generalizable ones into `data/learnings.md` through the required pass above and its tier marker, and skip the rest.
+After acting on a lesson, record the outcome with `bin/fm-lesson.sh reviewed <id> --filed|--skipped` so it stops resurfacing.
+Never copy a worker's lesson text verbatim into a memory file: restate it in your own words as the curated entry, because whatever reaches memory is repeated in every later brief.
+
 1. **Sweep the session for uncaptured durable knowledge.**
    Look for operational learnings, captain preferences expressed in passing, project-intrinsic facts, standing decisions, and undone next steps.
 2. **Route each finding using AGENTS.md's knowledge-routing table.**

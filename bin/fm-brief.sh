@@ -98,6 +98,11 @@
 # Every scaffold also carries the steering-inbox receive-and-ack section:
 # process state/<id>.inbox/*.msg in order and acknowledge each by moving it to
 # handled/ (record, doorbell, and ladder owned by bin/fm-task-inbox-lib.sh).
+# Both crewmate scaffolds also require one worker-reported durable lesson at
+# done, written to data/<id>/lesson.md in a machine-readable block this scaffold
+# owns. bin/fm-lesson.sh is the supervisor-side intake (list unreviewed, show,
+# record the reviewed outcome), and the stow skill files curated lessons into
+# data/learnings.md; no script copies worker text into memory.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -320,6 +325,8 @@ ASK_USER_BLOCK=
 if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
   ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
 fi
+RULE2="2. Stay inside this worktree; the only files you may write outside it are the lesson file and your status file."
+[ -z "$ASK_USER_BLOCK" ] || RULE2="2. Stay inside this worktree; the only files you may write outside it are the lesson file, your status file, and the ask-user findings snapshot below (\`$DATA/$ID/nm-<run>-findings.txt\`)."
 
 shell_quote() {
   printf "'"
@@ -347,6 +354,28 @@ When a terminal message says an instruction is waiting there - and at any natura
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
+
+# The worker-reported durable lesson, included in both crewmate scaffolds. The
+# machine-readable block format is owned here; bin/fm-lesson.sh owns the
+# supervisor-side intake and the reviewed marker; and the stow skill owns turning
+# a reviewed lesson into tiered data/learnings.md memory. Filing stays curated:
+# the scaffold forbids the worker from editing a memory file, and no script
+# copies worker text into memory.
+IFS= read -r -d '' LESSON_SECTION <<EOF || true
+# Durable lesson
+When you finish, record at most one durable lesson this task produced in \`$DATA/$ID/lesson.md\`,
+as exactly this machine-readable block and nothing else:
+
+lesson: <one sentence a future session would act on, or "none">
+scope: <home|project|tooling|process>
+evidence: <the command, file, or outcome that showed it>
+
+One lesson only, and only when a future session would act on it.
+Write \`lesson: none\` when you learned nothing durable - never invent one, and never pad with
+task-progress notes, a restatement of this brief, or one-off trivia.
+Firstmate reviews this file and files only what is worth keeping, so never edit a memory file yourself.
+EOF
+LESSON_SECTION=${LESSON_SECTION%$'\n'}
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -541,7 +570,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 
 # Rules
 1. Never push to any remote and never open a PR.
-2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
+2. Stay inside this worktree; the only files you may write outside it are the report, the lesson file, and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
@@ -567,6 +596,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 $SHARED_INFRA_RULE
 
 $INBOX_SECTION
+
+$LESSON_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -620,7 +651,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 
 # Rules
 $RULE1
-2. Stay inside this worktree; modify nothing outside it.
+$RULE2
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
@@ -655,6 +686,8 @@ Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 If you touch a project \`AGENTS.md\`, follow \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`'s self-governance contract in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+
+$LESSON_SECTION
 
 $DOD
 EOF

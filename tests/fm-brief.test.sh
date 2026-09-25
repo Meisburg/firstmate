@@ -926,6 +926,35 @@ test_ship_and_scout_teach_validation_round_pause() {
   pass "fm-brief.sh: ship and scout scaffolds teach validation-round pauses"
 }
 
+# Both crewmate scaffolds require one worker-reported durable lesson at done, in
+# the machine-readable block bin/fm-brief.sh owns, and explicitly allow the worker
+# to write it outside the worktree. The scaffold must also forbid the worker
+# editing a memory file: capture is automatic, filing stays curated by firstmate.
+test_ship_and_scout_require_durable_lesson() {
+  local home kind id brief
+  home="$TMP_ROOT/durable-lesson-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    id="brief-durable-lesson-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_grep '# Durable lesson' "$brief" "$kind brief missing the durable-lesson section"
+    assert_grep "$home/data/$id/lesson.md" "$brief" "$kind brief did not name the lesson file"
+    assert_grep 'lesson: <one sentence a future session would act on, or "none">' "$brief" \
+      "$kind brief missing the machine-readable lesson block"
+    assert_grep 'scope: <home|project|tooling|process>' "$brief" "$kind brief missing the lesson scope field"
+    assert_grep 'evidence: ' "$brief" "$kind brief missing the lesson evidence field"
+    assert_grep 'never edit a memory file yourself' "$brief" \
+      "$kind brief did not forbid the worker editing memory"
+  done
+  pass "fm-brief.sh: ship and scout require one machine-readable durable lesson and keep filing curated"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -1330,6 +1359,7 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_ship_and_scout_teach_validation_round_pause
+test_ship_and_scout_require_durable_lesson
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
